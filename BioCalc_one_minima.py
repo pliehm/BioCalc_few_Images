@@ -1,5 +1,6 @@
 ##############################################################################
 ### Script to calculate the cavity thicknes of a Biosensor for every pixel ###
+### with only one wavelength minima needed                                 ###
 ##############################################################################
 
 #############
@@ -13,13 +14,16 @@
 # named "data". "data" is what you would enter in the list below. You can enter more then one folder 
 # in this list (e.g. for 3 different long-time measurementes)
 
-data = ['test']
+data = ['data']
 
+# chose initial thickness map
+
+init_map_file = "1_0000_20150414_120819.txt"
 
 # chose wavelength range and step-width
 
-wave_start = 550    # [nm]
-wave_end = 750      # [nm]
+wave_start = 650   # [nm]
+wave_end = 700     # [nm]
 
 
 # enter a value to apply binning to run the calculation faster
@@ -44,9 +48,10 @@ sim_file = 'Sim_0.5Cr_15Au_50SiO2_Elastomer_RT601_15Au_500_760nm.txt'
 d_min= 2000 # [nm]
 d_max= 11000 # [nm]
 
-
+# this has to be True!!
 use_thickness_limits = True # Enter "True" if you want to do calculation with thickness limits and "False" if not. I recommend starting with "True" if you see sharpe edges you might need to switch to "Fals"
 
+# The maximum value should be checked
 thickness_limit = 50 # [nm] enter the thickness limit (if thickness was found, next on will be: last_thickness +- thickness_limit)
 
 area_avrg = 2 # this number defines how many pixel are considerd for an average to guess the new thickness, e.g.: 2 means that all pixels in a range of 2 rows above, two columns to the left and the right are averaged, that makes 12px, 1 --> 4px, 2 --> 12px, 3--> 24px
@@ -85,7 +90,7 @@ color_max = 500
 #############################
 
 # load all the python modules needed
-import cython_all_fit as Fit # import self-written cython code
+import cython_one_minima as Fit # import self-written cython code
 import numpy as np
 import time
 import os 
@@ -102,6 +107,67 @@ version = 'BioCalc 2.1.1'
 
 t_a_start = time.time() # start timer for runtime measurement
 
+# read init map
+
+init_map = np.genfromtxt(init_map_file)
+
+
+########################################################################
+# Read the simulation file and get the minima for the thickness range #
+########################################################################
+
+
+# read simulation file 
+print 'read simulated data'
+
+# open file
+p= open('Simulated_minima/' + sim_file,'r')
+
+# read the whole content of the file into a string
+string=p.read()
+
+# close the file
+p.close()
+
+# list which will contain, thickness, length of a set of wavelengths, starting position of the block --> this is all useful to have to improve speed
+thickness_len_pos=[]
+
+# current set of minima for one thickness
+minima_block=[]
+
+# list which contains all minima_blocks arrays one after another
+list_minima_blocks = []
+
+# variable which defines at which position a set of minima starts
+position = 0
+
+# read every line of the string
+for thisline in string.split('\n'):
+    # check if the current line contains a thickness
+    if ('\t' in thisline) == False and len(thisline) != 0:
+        thickness = thisline
+    # check if this is a line with no thickness, but one is still in the thickness range
+    if ('\t' in thisline) == True and int(thickness) >= d_min and int(thickness) <= d_max:
+        # split line into words
+        for word in thisline.split('\t'):
+            # check word if it is a wavelengt, only append it if its in the wavelength range +- lookahead
+            if len(word)<6 and float(word) >= wave_start + lookahead_min and float(word)<= wave_end - lookahead_min: # use only minima which are in the wave-range + lookahead_min
+                # append the wavelength to the current block of wavelengths
+                minima_block.append(float(word))
+
+    # check if the line is empty and inside the thickness range
+    if len(thisline) == 0 and int(thickness) >= d_min and int(thickness) <= d_max:
+
+        # append thickness, length of waveblock, position of block to a list
+        thickness_len_pos.append([np.uint16(thickness),np.uint16(len(minima_block)),np.uint32(position)]) # calculate length of the waveblock since it will be needed later
+
+        # append waveblock to an array
+        list_minima_blocks.append(np.array(minima_block,dtype=np.float))
+
+        # update the current starting position of the next waveblock
+        position += len(minima_block)
+        # clear the waveblock to write new wavelengths into it
+        minima_block=[]
 
 # make sure that this part only runs as main process, not subprocess, thats important for the multiprocessing
 if __name__ == '__main__':
@@ -239,62 +305,7 @@ if __name__ == '__main__':
                         
 
 
-    ########################################################################
-    # Read the simulation file and get the minima for the thickness range #
-    ########################################################################
-
-
-            # read simulation file 
-            print 'read simulated data'
-
-            # open file
-            p= open('Simulated_minima/' + sim_file,'r')
-
-            # read the whole content of the file into a string
-            string=p.read()
-
-            # close the file
-            p.close()
-
-            # list which will contain, thickness, length of a set of wavelengths, starting position of the block --> this is all useful to have to improve speed
-            thickness_len_pos=[]
-
-            # current set of minima for one thickness
-            minima_block=[]
-
-            # list which contains all minima_blocks arrays one after another
-            list_minima_blocks = []
-
-            # variable which defines at which position a set of minima starts
-            position = 0
-
-            # read every line of the string
-            for thisline in string.split('\n'):
-                # check if the current line contains a thickness
-                if ('\t' in thisline) == False and len(thisline) != 0:
-                    thickness = thisline
-                # check if this is a line with no thickness, but one is still in the thickness range
-                if ('\t' in thisline) == True and int(thickness) >= d_min and int(thickness) <= d_max:
-                    # split line into words
-                    for word in thisline.split('\t'):
-                        # check word if it is a wavelengt, only append it if its in the wavelength range +- lookahead
-                        if len(word)<6 and float(word) >= wave_start + lookahead_min and float(word)<= wave_end - lookahead_min: # use only minima which are in the wave-range + lookahead_min
-                            # append the wavelength to the current block of wavelengths
-                            minima_block.append(float(word))
-
-                # check if the line is empty and inside the thickness range
-                if len(thisline) == 0 and int(thickness) >= d_min and int(thickness) <= d_max:
-
-                    # append thickness, length of waveblock, position of block to a list
-                    thickness_len_pos.append([np.uint16(thickness),np.uint16(len(minima_block)),np.uint32(position)]) # calculate length of the waveblock since it will be needed later
-
-                    # append waveblock to an array
-                    list_minima_blocks.append(np.array(minima_block,dtype=np.float))
-
-                    # update the current starting position of the next waveblock
-                    position += len(minima_block)
-                    # clear the waveblock to write new wavelengths into it
-                    minima_block=[]
+    
 
             print 'perform the calculations'
             # get start time for simulation to check later how long it took
@@ -326,53 +337,7 @@ if __name__ == '__main__':
 ## Start calculations either with multiprocessing or single ##
 ##############################################################
 
-            #########################
-            # Multi-Core Processing #
-            #########################
-
-            if multi_p == True:
-
-                def put_into_queue(start,ende,que,all_images, thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta,delta_vary, use_thickness_limits, thickness_limit,area_avrg):
-
-                    # it is weird that the arguments of the function are not the same as the arguments which are used --> list_minima_blocks is missing. But it still works
-
-                    que.put(Fit.c_Fit_Pixel(start,ende,all_images, thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta, delta_vary,list_minima_blocks, use_thickness_limits, thickness_limit,area_avrg)) # calls the C-Fit-function
-                    #print 'Schlange ist satt'
-
-                
-                
-                # devide the rows by the core-number --> to split it equally, assing the rest to the last process
-                Zeile_Teil = Image_height/cores
-                Zeile_Rest = Image_height%cores
-
-                # start multiprocessing with queues
-
-                Prozesse = []
-                Queues = []
-
-                for i in range(cores):
-                    Queues.append(mp.Queue())
-
-                # assign the data properly to the Processes
-                for i in range(cores):
-                    if i < cores-1:
-                        Prozesse.append(mp.Process(target=put_into_queue,args=(i*Zeile_Teil,(i+1)*Zeile_Teil,Queues[i],all_images[:,(i*Zeile_Teil):((i+1)*Zeile_Teil),:], thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta,delta_vary, use_thickness_limits, thickness_limit,area_avrg)))
-                    if i == cores-1:
-                        Prozesse.append(mp.Process(target=put_into_queue,args=(i*Zeile_Teil,(i+1)*Zeile_Teil+Zeile_Rest,Queues[i],all_images[:,(i*Zeile_Teil):((i+1)*Zeile_Teil),:], thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta, delta_vary,use_thickness_limits, thickness_limit,area_avrg)))
-                for i in range(cores):
-                    Prozesse[i].start()
-                    
-
-                # initialise array for thicknesses
-                result = np.ndarray((0,Image_width),dtype=np.uint16)
-
-                for i in range(cores):
-                    #print 'queuet', i
-                    result = np.append(result,Queues[i].get(),axis=0)
-
-                for i in range(cores):
-                    #print 'joint', i
-                    Prozesse[i].join()
+           # no muilticore processing anymore
 
 
             ##########################
@@ -387,10 +352,14 @@ if __name__ == '__main__':
                 ende = Image_height
 
                 # call the external cython/c++ function with all the parameters
-                result = Fit.c_Fit_Pixel(start,ende,all_images, thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta,delta_vary,list_minima_blocks, use_thickness_limits, thickness_limit,area_avrg)
+                result = Fit.c_Fit_Pixel(start,ende,all_images, thickness_len_pos, waves, tolerance, lookahead_min, lookahead_max, delta,delta_vary,list_minima_blocks, use_thickness_limits, thickness_limit,area_avrg, init_map)
             t2 = time.time()
 
+            # make the result the init_map for the next calcualtion 
+            # *** I should probably write something to update the init_map such that if pixels 
+            # were not fitted --> they are take from the old init_map, or they are an average of the surrounding (interpolate? smooth?) *** 
 
+            init_map = result[0]
 
             print t2-t1, 'seconds just for the calculation'
 
@@ -400,7 +369,7 @@ if __name__ == '__main__':
             # count not fitted values #
             ###########################
 
-            not_fitted = Image_height*Image_width - np.count_nonzero(result)
+            not_fitted = Image_height*Image_width - np.count_nonzero(init_map)
             not_fitted_percent = 100.0/(Image_height*Image_width)*not_fitted
             print 'not fitted values',not_fitted
             print 'in percent:', not_fitted_percent
@@ -437,7 +406,7 @@ if __name__ == '__main__':
             file_name = data_folder + '_' + folder + time.strftime("_%Y%m%d_%H%M%S")+'.txt'
 
             # use numpy function to save array to file, '0' and not '-' are used for missing values
-            np.savetxt(data_folder + '/' + file_name,result,fmt='%d')#,header=HEADER )
+            np.savetxt(data_folder + '/' + file_name,init_map,fmt='%f')#,header=HEADER )
 
             ######################################################################
             # script to replace a certain string or string combination in a file #
@@ -471,13 +440,13 @@ if __name__ == '__main__':
             ##############
 
             # make a new figure
-            plt.figure(folder)
+            #plt.figure(folder)
             # create plot of the results
-            plt.imshow(result)
+            #plt.imshow(init_map)
             # set the color scale to the limits provided
-            plt.clim(result.mean()-color_min,result.mean()+color_max)
+            #plt.clim(init_map.mean()-color_min,init_map.mean()+color_max)
             # plot a color bar
-            plt.colorbar()
+            #plt.colorbar()
 
             # remove "#" to show the plot after the calculation
             #plt.show()
